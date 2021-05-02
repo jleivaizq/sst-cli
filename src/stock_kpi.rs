@@ -11,56 +11,53 @@ pub struct StocKpi {
     pub min: Option<f64>,
     pub max: Option<f64>,
     pub price_diff: Option<(f64, f64)>,
-
-    sma: Option<Vec<f64>>,
-    quotes: Option<Vec<Quote>>,
+    pub sma: Option<Vec<f64>>,
+    pub last_quote: Option<Quote>,
 }
 
 impl StocKpi {
     pub fn new(symbol: &str, from_src: NaiveDate) -> Self {
-    StocKpi {
-        from: from_src,
-        symbol: String::from(symbol),
-        min: None,
-        max: None,
-        sma: None,
-        price_diff: None,
-        quotes: None,
+        StocKpi {
+            from: from_src,
+            symbol: String::from(symbol),
+            min: None,
+            max: None,
+            price_diff: None,
+            sma: None,
+            last_quote: None
+        } 
     } 
-    }
 
     fn retrieve_quotes(symbol: &str, from: &NaiveDate) -> Result<Vec<Quote>, YahooError> {
         info!("Downloading values for symbol {} from {}", symbol, from);
         let provider = yahoo::YahooConnector::new();
         let start = Utc.ymd(from.year(), from.month(), from.day()).and_hms_milli(0, 0, 0, 0);
-        let end = Utc::now();
-        let result = provider.get_quote_history(&symbol, start, end)?;
-        result.quotes()
+        provider.get_quote_history(&symbol, start, Utc::now())?.quotes()
     }
 
-    fn min(series: &[Quote]) -> Option<f64> {
-        series.iter()
-            .map(|quote| quote.low)
-            .fold(None, |min, low| match min {
-                None => Some(low),
-                Some(value) => if value < low { Some(value) } else { Some(low) }
-            })
+    fn min(series: &[f64]) -> Option<f64> {
+        if series.is_empty() {
+            None
+        } else {
+            Some(series.iter().fold(f64::MAX, |acc, q| acc.min(*q)))
+        }
     }
 
-    fn max(series: &[Quote]) -> Option<f64> {
-        series.iter()
-            .map(|quote| quote.high)
-            .fold(None, |max, high| match max {
-                None => Some(high),
-                Some(value) => if value > high { Some(value) } else { Some(high) }
-            })
+    fn max(series: &[f64]) -> Option<f64> {
+        if series.is_empty() {
+            None
+        } else {
+            Some(series.iter().fold(f64::MIN, |acc, q| acc.max(*q)))
+        }
     }
 
     fn n_window_sma(n: usize, series: &[f64]) -> Option<Vec<f64>> {
         if series.is_empty() {
             None
         } else {
-            Some(series.chunks_exact(n).map(|c| c.iter().sum::<f64>() / n as f64).collect())
+            Some(series.windows(n)
+                       .map(|w| w.iter().sum::<f64>() / w.len() as f64)
+                       .collect())
         }
     }
 
@@ -75,14 +72,6 @@ impl StocKpi {
         }
     }
 
-    pub fn last_quote(self: &StocKpi) -> Option<&Quote> {
-        if let Some(quotes) = &self.quotes{
-            Some(quotes.last().unwrap())
-        } else {
-            None
-        }
-    }
-
     pub fn last_sma(self: &StocKpi) -> Option<f64> {
         if let Some(sma) = &self.sma {
             Some(sma.last().unwrap().clone())
@@ -94,12 +83,12 @@ impl StocKpi {
     pub fn calculate(self: &mut StocKpi, sma_window: usize) { 
         match StocKpi::retrieve_quotes(&self.symbol, &self.from) {
             Ok(quotes) => {
-                self.min = StocKpi::min(&quotes[..]);
-                self.max = StocKpi::max(&quotes[..]);
-                let adjclose_series : Vec<f64> = quotes.iter().map(|q|q.adjclose).collect();
-                self.sma = StocKpi::n_window_sma(sma_window, &adjclose_series[..]);
-                self.price_diff = StocKpi::price_diff(&adjclose_series[..]);
-                self.quotes = Some(quotes);
+                let closes: Vec<f64> = quotes.iter().map(|q| q.adjclose as f64).collect();
+                self.min = StocKpi::min(&closes[..]);
+                self.max = StocKpi::max(&closes[..]);
+                self.sma = StocKpi::n_window_sma(sma_window, &closes[..]);
+                self.price_diff = StocKpi::price_diff(&closes[..]);
+                self.last_quote = Some(quotes.last().unwrap().clone());
             },
             Err(error) => {
                 error!("Could not calculate performance metrics for {} from {}. Error: {}", 

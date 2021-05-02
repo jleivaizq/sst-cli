@@ -38,7 +38,7 @@ fn main() {
         for symbol in args.symbols {
             let mut stock = StocKpi::new(&symbol, args.from);
             stock.calculate(args.window);
-            if let Some(last_quote) = stock.last_quote() {
+            if let Some(last_quote) = &stock.last_quote {
                 let price_diff = stock.price_diff;
                 println!("{timestamp},{symbol},${price:.2},{change:.2}%,${min:.2},${max:.2},{last_sma:.2}", 
                         timestamp=NaiveDateTime::from_timestamp(last_quote.timestamp as i64, 0).format("%Y-%m-%dT%H:%M:%S"),
